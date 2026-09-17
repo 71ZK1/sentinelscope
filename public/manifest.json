@@ -1,0 +1,19 @@
+{
+  "short_name": "SentinelScope",
+  "name": "SentinelScope Attack Surface Management",
+  "description": "Enterprise Attack Surface Management, Reconnaissance, and Security Header Auditor",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "192x192 512x512 any",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#020617",
+  "theme_color": "#020617",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "categories": ["security", "developer tools", "utilities"]
+}

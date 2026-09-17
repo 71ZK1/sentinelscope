@@ -1,0 +1,362 @@
+// prisma/schema.prisma
+// SentinelScope - Attack Surface Management & Security Reconnaissance Database Schema
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  ANALYST
+  AUDITOR
+  VIEWER
+}
+
+enum TargetStatus {
+  HEALTHY
+  SCANNING
+  ERROR
+  IDLE
+}
+
+enum ScanStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum AssetType {
+  ROOT_DOMAIN
+  SUBDOMAIN
+  IP_HOST
+  API_ENDPOINT
+  CLOUD_SERVICE
+  MAIL_SERVER
+}
+
+enum AssetStatus {
+  LIVE
+  UNRESPONSIVE
+  FILTERED
+}
+
+enum Severity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  INFO
+}
+
+enum FindingCategory {
+  TLS
+  HTTP_HEADERS
+  EXPOSED_SERVICE
+  CONFIGURATION
+  TECHNOLOGY_RISK
+  DNS
+  INFORMATIONAL
+}
+
+enum FindingStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+  FALSE_POSITIVE
+}
+
+enum ChangeType {
+  NEW_ASSET
+  REMOVED_ASSET
+  NEW_PORT
+  CLOSED_PORT
+  TECH_CHANGE
+  NEW_FINDING
+  RESOLVED_FINDING
+}
+
+model User {
+  id            String         @id @default(uuid())
+  email         String         @unique
+  name          String
+  passwordHash  String
+  role          Role           @default(ANALYST)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  targets       Target[]
+  scans         Scan[]
+  notifications Notification[]
+  auditLogs     AuditLog[]
+
+  @@map("users")
+}
+
+model Target {
+  id             String              @id @default(uuid())
+  userId         String
+  user           User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  domain         String              @unique
+  name           String?
+  status         TargetStatus        @default(IDLE)
+  riskScore      Int                 @default(0)
+  riskLevel      String              @default("LOW")
+  isAuthorized   Boolean             @default(true)
+  authorizedAt   DateTime            @default(now())
+  authorizedBy   String
+  rateLimit      Int                 @default(60) // max probes per minute
+  tags           String[]            @default([])
+  notes          String?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  scans          Scan[]
+  assets         Asset[]
+  findings       Finding[]
+  changes        HistoricalChange[]
+
+  @@index([userId])
+  @@index([domain])
+  @@map("targets")
+}
+
+model Scan {
+  id               String       @id @default(uuid())
+  targetId         String
+  target           Target       @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  userId           String
+  user             User         @relation(fields: [userId], references: [id])
+  status           ScanStatus   @default(QUEUED)
+  scanType         String       @default("FULL_RECON") // FULL_RECON, PASSIVE_DNS, QUICK_PORT, WEB_PROBE
+  progress         Int          @default(0)
+  currentStage     String       @default("Initializing scan...")
+  startedAt        DateTime?
+  completedAt      DateTime?
+  durationSeconds  Int          @default(0)
+  assetsFound      Int          @default(0)
+  findingsCount    Int          @default(0)
+  riskScoreDelta   Int          @default(0)
+  logs             ScanEvent[]
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  assets           Asset[]
+  findings         Finding[]
+  changes          HistoricalChange[]
+
+  @@index([targetId])
+  @@index([status])
+  @@map("scans")
+}
+
+model Asset {
+  id               String             @id @default(uuid())
+  targetId         String
+  target           Target             @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  scanId           String?
+  scan             Scan?              @relation(fields: [scanId], references: [id])
+  hostname         String
+  assetType        AssetType          @default(SUBDOMAIN)
+  status           AssetStatus        @default(LIVE)
+  primaryIp        String?
+  riskScore        Int                @default(0)
+  riskLevel        String             @default("LOW")
+  httpStatus       Int?
+  title            String?
+  webServer        String?
+  sslGrade         String?
+  sslExpiryDays    Int?
+  firstSeen        DateTime           @default(now())
+  lastSeen         DateTime           @default(now())
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  ipAddresses      IPAddress[]
+  services         Service[]
+  technologies     Technology[]
+  findings         Finding[]
+  outgoingLinks    AssetRelationship[] @relation("sourceAsset")
+  incomingLinks    AssetRelationship[] @relation("targetAsset")
+
+  @@unique([targetId, hostname])
+  @@index([targetId])
+  @@index([hostname])
+  @@index([status])
+  @@map("assets")
+}
+
+model IPAddress {
+  id           String   @id @default(uuid())
+  assetId      String
+  asset        Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  ip           String
+  version      String   @default("IPv4")
+  asn          String?
+  organization String?
+  country      String?
+  countryCode  String?
+  isCdn        Boolean  @default(false)
+  reverseDns   String?
+  createdAt    DateTime @default(now())
+
+  @@index([assetId])
+  @@index([ip])
+  @@map("ip_addresses")
+}
+
+model Service {
+  id         String   @id @default(uuid())
+  assetId    String
+  asset      Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  port       Int
+  protocol   String   @default("TCP")
+  name       String   // e.g. "HTTPS", "SSH", "HTTP", "MySQL"
+  product    String?  // e.g. "nginx", "OpenSSH"
+  version    String?
+  banner     String?
+  tlsEnabled Boolean  @default(false)
+  state      String   @default("OPEN")
+  firstSeen  DateTime @default(now())
+  lastSeen   DateTime @default(now())
+
+  @@unique([assetId, port, protocol])
+  @@index([assetId])
+  @@map("services")
+}
+
+model Technology {
+  id         String   @id @default(uuid())
+  assetId    String
+  asset      Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  name       String   // e.g. "React", "Node.js", "Cloudflare", "Tailwind"
+  category   String   // e.g. "Web Framework", "CDN", "Programming Language"
+  version    String?
+  confidence Int      @default(90)
+  icon       String?
+  firstSeen  DateTime @default(now())
+  lastSeen   DateTime @default(now())
+
+  @@unique([assetId, name])
+  @@index([assetId])
+  @@map("technologies")
+}
+
+model Finding {
+  id                String            @id @default(uuid())
+  targetId          String
+  target            Target            @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  assetId           String
+  asset             Asset             @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  scanId            String?
+  scan              Scan?             @relation(fields: [scanId], references: [id])
+  title             String
+  description       String
+  severity          Severity          @default(MEDIUM)
+  category          FindingCategory   @default(CONFIGURATION)
+  cve               String?
+  cvssScore         Float?
+  evidence          String
+  recommendation    String
+  remediationEffort String            @default("LOW") // LOW, MEDIUM, HIGH
+  status            FindingStatus     @default(OPEN)
+  firstSeen         DateTime          @default(now())
+  lastSeen          DateTime          @default(now())
+  resolvedAt        DateTime?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  evidenceSnippets  FindingEvidence[]
+
+  @@index([targetId])
+  @@index([assetId])
+  @@index([severity])
+  @@index([status])
+  @@map("findings")
+}
+
+model FindingEvidence {
+  id              String   @id @default(uuid())
+  findingId       String
+  finding         Finding  @relation(fields: [findingId], references: [id], onDelete: Cascade)
+  rawData         String?
+  requestPayload  String?
+  responseHeaders String?
+  proofSnippet    String
+  createdAt       DateTime @default(now())
+
+  @@map("finding_evidences")
+}
+
+model AssetRelationship {
+  id            String   @id @default(uuid())
+  sourceAssetId String
+  sourceAsset   Asset    @relation("sourceAsset", fields: [sourceAssetId], references: [id], onDelete: Cascade)
+  targetAssetId String
+  targetAsset   Asset    @relation("targetAsset", fields: [targetAssetId], references: [id], onDelete: Cascade)
+  relationType  String   // SUBDOMAIN_OF, RESOLVES_TO, DEPENDS_ON
+  createdAt     DateTime @default(now())
+
+  @@unique([sourceAssetId, targetAssetId, relationType])
+  @@map("asset_relationships")
+}
+
+model ScanEvent {
+  id        String   @id @default(uuid())
+  scanId    String
+  scan      Scan     @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  stage     String
+  message   String
+  level     String   @default("INFO") // INFO, WARN, ERROR, SUCCESS
+  timestamp DateTime @default(now())
+
+  @@index([scanId])
+  @@map("scan_events")
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String   // SCAN_COMPLETE, CRITICAL_FINDING, NEW_ASSET, SCAN_FAILED
+  title     String
+  message   String
+  severity  String   @default("INFO") // CRITICAL, HIGH, MEDIUM, LOW, INFO
+  link      String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("notifications")
+}
+
+model HistoricalChange {
+  id          String     @id @default(uuid())
+  targetId    String
+  target      Target     @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  scanId      String?
+  scan        Scan?      @relation(fields: [scanId], references: [id])
+  changeType  ChangeType
+  title       String
+  description String
+  severity    Severity   @default(INFO)
+  timestamp   DateTime   @default(now())
+
+  @@index([targetId])
+  @@map("historical_changes")
+}
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id])
+  action       String   // TARGET_CREATED, SCAN_INITIATED, SCOPE_CONFIRMED, STATUS_CHANGED
+  targetDomain String?
+  ipAddress    String?
+  userAgent    String?
+  details      String?
+  timestamp    DateTime @default(now())
+
+  @@map("audit_logs")
+}

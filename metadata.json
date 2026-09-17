@@ -1,0 +1,6 @@
+{
+  "name": "SentinelScope",
+  "description": "Attack Surface Management & Security Reconnaissance Platform - Discover, monitor, and map your authorized organization's internet-facing assets before attackers do.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
